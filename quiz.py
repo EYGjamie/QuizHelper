@@ -111,7 +111,7 @@ class QuizHelper:
         
         # Setze Standard-Modell basierend auf verfügbaren API Keys
         if self.groq_api_key:
-            self.model_combo.set("Mixtral-8x7B (Groq)")
+            self.model_combo.set("llama-3.1-8b-instant (Groq)")
         elif self.openai_api_key:
             self.model_combo.set("GPT-3.5 Turbo (OpenAI)")
         elif self.model_combo['values']:
