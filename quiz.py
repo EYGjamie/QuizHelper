@@ -35,7 +35,7 @@ class QuizHelper:
         self.CHANNELS = 1  # Mono für schnellere Verarbeitung
         self.RATE = 16000  # Reduzierte Samplerate für schnellere Verarbeitung
         self.CHUNK = 512   # Kleinere Chunks für geringere Latenz
-        self.RECORD_SECONDS = 2  # Kürzere Segmente für schnellere Antworten
+        self.RECORD_SECONDS = 3  # Standard-Aufnahmedauer (einstellbar in GUI)
         
         # Flags und Queues
         self.recording = False
@@ -77,6 +77,7 @@ class QuizHelper:
         # Tkinter Variablen NACH Root-Erstellung
         self.current_model = tk.StringVar()
         self.device_var = tk.StringVar()
+        self.record_duration_var = tk.DoubleVar(value=3.0)  # Standard 3 Sekunden
         
         # Stil konfigurieren
         style = ttk.Style()
@@ -132,6 +133,33 @@ class QuizHelper:
         refresh_btn = ttk.Button(device_frame, text="Aktualisieren", command=self.refresh_devices)
         refresh_btn.pack(side=tk.LEFT, padx=5)
         
+        # Aufnahmedauer-Einstellung
+        duration_frame = ttk.LabelFrame(control_frame, text="Aufnahme-Einstellungen", padding="10")
+        duration_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(duration_frame, text="Aufnahmedauer:").pack(side=tk.LEFT, padx=5)
+        
+        # Slider für Aufnahmedauer
+        self.duration_slider = ttk.Scale(
+            duration_frame,
+            from_=1.0,
+            to=10.0,
+            orient=tk.HORIZONTAL,
+            variable=self.record_duration_var,
+            command=self.update_duration_label,
+            length=200
+        )
+        self.duration_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Label für aktuelle Dauer
+        self.duration_label = ttk.Label(duration_frame, text="3.0 Sek.")
+        self.duration_label.pack(side=tk.LEFT, padx=5)
+        
+        # Info-Label
+        info_label = ttk.Label(duration_frame, text="(Kurz für schnelle Antworten, Lang für komplexe Fragen)", 
+                              font=('Arial', 8), foreground='gray')
+        info_label.pack(side=tk.LEFT, padx=10)
+        
         # Start/Stop Button
         self.toggle_button = ttk.Button(control_frame, text="Aufnahme starten", 
                                        command=self.toggle_recording,
@@ -147,6 +175,9 @@ class QuizHelper:
         
         self.response_time_label = ttk.Label(info_frame, text="Response: --ms")
         self.response_time_label.pack(side=tk.LEFT, padx=10)
+        
+        self.buffer_progress_label = ttk.Label(info_frame, text="Buffer: 0%")
+        self.buffer_progress_label.pack(side=tk.LEFT, padx=10)
         
         # Hauptbereich
         main_frame = ttk.Frame(self.root, padding="10")
@@ -204,6 +235,12 @@ class QuizHelper:
         else:
             self.api_status_label.config(text="⚠️ Keine API verfügbar")
         
+    def update_duration_label(self, value):
+        """Aktualisiert das Label für die Aufnahmedauer"""
+        duration = float(value)
+        self.duration_label.config(text=f"{duration:.1f} Sek.")
+        self.RECORD_SECONDS = duration
+        
     def show_help(self):
         """Zeigt Hilfe-Dialog"""
         help_text = """
@@ -219,10 +256,15 @@ class QuizHelper:
             • Alternative: Virtual Audio Cable
             • OBS Virtual Audio
 
+            AUFNAHMEDAUER EINSTELLEN:
+            • 1-3 Sek: Für kurze Quizfragen (schnellste Antworten)
+            • 4-6 Sek: Für normale Fragen
+            • 7-10 Sek: Für lange, komplexe Fragen
+
             PERFORMANCE-TIPPS:
             • Nutze Groq für schnellste Antworten
-            • Stelle klare Audio-Qualität sicher
-            • Modell-Wahl beeinflusst Geschwindigkeit
+            • Kurze Aufnahmedauer = Schnellere Antworten
+            • Lange Aufnahmedauer = Vollständige Fragen
 
             MODELLE:
             • Groq: Kostenlos & schnell (empfohlen!)
@@ -330,6 +372,7 @@ class QuizHelper:
             print("Aufnahme gestartet (Turbo-Modus)...")
             frames = []
             silence_counter = 0
+            silence_threshold = int(20 * (self.RECORD_SECONDS / 3))  # Dynamischer Schwellwert
             
             while self.recording:
                 data = stream.read(self.CHUNK, exception_on_overflow=False)
@@ -348,11 +391,26 @@ class QuizHelper:
                 
                 # Sende Audio wenn genug aufgenommen oder Stille erkannt
                 buffer_duration = len(frames) * self.CHUNK / self.RATE
-                if buffer_duration >= self.RECORD_SECONDS or (silence_counter > 10 and len(frames) > 20):
-                    if len(frames) > 10:  # Mindestlänge
+                buffer_progress = min(int((buffer_duration / self.RECORD_SECONDS) * 100), 100)
+                
+                # Update Buffer-Fortschritt
+                self.result_queue.put(("buffer", buffer_progress))
+                
+                # Bei kurzen Aufnahmen: Stille-Erkennung aktiv
+                # Bei langen Aufnahmen: Warte auf volle Dauer
+                if self.RECORD_SECONDS <= 3:
+                    # Schneller Modus für kurze Fragen
+                    if buffer_duration >= self.RECORD_SECONDS or (silence_counter > silence_threshold and len(frames) > 20):
+                        if len(frames) > 10:
+                            self.audio_queue.put(frames.copy())
+                        frames = []
+                        silence_counter = 0
+                else:
+                    # Längerer Modus für komplexe Fragen
+                    if buffer_duration >= self.RECORD_SECONDS:
                         self.audio_queue.put(frames.copy())
-                    frames = []
-                    silence_counter = 0
+                        frames = []
+                        silence_counter = 0
             
             stream.stop_stream()
             stream.close()
@@ -415,8 +473,9 @@ class QuizHelper:
         """Konvertiert Audio zu Text mit minimaler Latenz"""
         try:
             with sr.AudioFile(wav_file) as source:
-                # Kürze Audio für schnellere Verarbeitung
-                audio = self.recognizer.record(source, duration=10)
+                # Dynamische Duration basierend auf Aufnahmelänge
+                max_duration = min(self.RECORD_SECONDS + 1, 10)
+                audio = self.recognizer.record(source, duration=max_duration)
                 
                 # Google Speech Recognition (schnell & kostenlos)
                 text = self.recognizer.recognize_google(
@@ -569,6 +628,9 @@ class QuizHelper:
                     
                 elif msg_type == "time":
                     self.response_time_label.config(text=f"Response: {content}ms")
+                    
+                elif msg_type == "buffer":
+                    self.buffer_progress_label.config(text=f"Buffer: {content}%")
                     
                 elif msg_type == "error":
                     self.status_label.config(text=f"Status: {content}")
