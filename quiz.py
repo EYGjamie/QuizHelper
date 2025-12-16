@@ -524,7 +524,7 @@ class QuizHelper:
                 messages=[
                     {
                         "role": "system", 
-                        "content": "Beantworte Quiz-Fragen EXTREM KURZ. NUR die Antwort, KEINE Erklärung. Max 1-3 Wörter!"
+                        "content": "Beantworte Quiz-Fragen KURZ. NUR die Antwort, KEINE große Erklärung."
                     },
                     {
                         "role": "user", 
