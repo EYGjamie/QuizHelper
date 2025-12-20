@@ -41,6 +41,7 @@ class QuizHelper:
         self.recording = False
         self.audio_queue = queue.Queue()
         self.result_queue = queue.Queue()
+        self.last_question = ""  # Speichert die letzte Frage für Schnellantwort
         
         # Audio-Setup
         self.audio = pyaudio.PyAudio()
@@ -54,6 +55,7 @@ class QuizHelper:
         self.models = {
             "GPT-3.5 Turbo (OpenAI)": {"provider": "openai", "model": "gpt-3.5-turbo"},
             "GPT-4 Turbo (OpenAI)": {"provider": "openai", "model": "gpt-4-turbo-preview"},
+            "grok-4-1-fast-reasoning (Groq)": {"provider": "groq", "model": "grok-4-1-fast-reasoning"},
             "llama-3.3-70b-versatile (Groq)": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
             "llama-3.1-8b-instant (Groq)": {"provider": "groq", "model": "llama-3.1-8b-instant"},
             "Mixtral-8x7B (Groq)": {"provider": "groq", "model": "mixtral-8x7b-32768"},
@@ -71,8 +73,8 @@ class QuizHelper:
         
     def setup_gui(self):
         self.root = tk.Tk()
-        self.root.title("Discord Quiz Helper - Turbo Edition")
-        self.root.geometry("900x750")
+        self.root.title("Interview Helper - Live Assistance")
+        self.root.geometry("900x800")
         
         # Tkinter Variablen NACH Root-Erstellung
         self.current_model = tk.StringVar()
@@ -88,7 +90,7 @@ class QuizHelper:
         header_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E))
         
         # Titel
-        title_label = ttk.Label(header_frame, text="Discord Quiz Helper - Turbo Edition ⚡", 
+        title_label = ttk.Label(header_frame, text="Interview Helper - Live Assistance 💼", 
                                font=('Arial', 16, 'bold'))
         title_label.pack()
         
@@ -207,6 +209,25 @@ class QuizHelper:
         help_button = ttk.Button(button_frame, text="Hilfe", command=self.show_help)
         help_button.pack(side=tk.LEFT, padx=5)
         
+        # Text-Eingabe Frame für manuelle Fragen
+        input_frame = ttk.LabelFrame(main_frame, text="Frage manuell eingeben (für Live-Interview)", padding="10")
+        input_frame.pack(fill=tk.X, pady=(10, 5))
+        
+        # Eingabefeld
+        self.manual_input = tk.Entry(input_frame, font=('Arial', 11))
+        self.manual_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.manual_input.bind('<Return>', lambda e: self.send_manual_question())
+        
+        # Senden-Button
+        send_button = ttk.Button(input_frame, text="Antwort abrufen", 
+                                command=self.send_manual_question)
+        send_button.pack(side=tk.LEFT, padx=2)
+        
+        # Schnellantwort-Button (letzte Frage)
+        quick_button = ttk.Button(input_frame, text="🔄 Letzte Frage", 
+                                 command=self.quick_answer_last)
+        quick_button.pack(side=tk.LEFT, padx=2)
+        
         # Grid-Gewichtung
         self.root.grid_rowconfigure(2, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -244,32 +265,36 @@ class QuizHelper:
     def show_help(self):
         """Zeigt Hilfe-Dialog"""
         help_text = """
-            Discord Quiz Helper - Turbo Edition ⚡
+            Interview Helper - Live Assistance 💼
 
             SETUP .env DATEI:
             Erstelle eine .env Datei im gleichen Ordner mit:
             OPENAI_API_KEY=dein_openai_key
             GROQ_API_KEY=dein_groq_key
 
-            AUDIO-AUFNAHME:
-            • Windows: Stereo Mix aktivieren
-            • Alternative: Virtual Audio Cable
-            • OBS Virtual Audio
+            VERWENDUNG:
+            1. AUDIO-AUFNAHME: Für automatische Fragenerkennung
+               • Windows: Stereo Mix aktivieren
+               • Alternative: Virtual Audio Cable
+               
+            2. MANUELLE EINGABE: Tippe Frage direkt ein
+               • Enter-Taste oder "Antwort abrufen" Button
+               • "🔄 Letzte Frage" für schnelle Wiederholung
 
             AUFNAHMEDAUER EINSTELLEN:
-            • 1-3 Sek: Für kurze Quizfragen (schnellste Antworten)
-            • 4-6 Sek: Für normale Fragen
-            • 7-10 Sek: Für lange, komplexe Fragen
-
-            PERFORMANCE-TIPPS:
-            • Nutze Groq für schnellste Antworten
-            • Kurze Aufnahmedauer = Schnellere Antworten
-            • Lange Aufnahmedauer = Vollständige Fragen
+            • 3-5 Sek: Für kurze Fragen
+            • 6-8 Sek: Für normale Fragen
+            • 8-10 Sek: Für lange, komplexe Fragen
 
             MODELLE:
             • Groq: Kostenlos & schnell (empfohlen!)
             • OpenAI: Beste Qualität
             • Ollama: Komplett offline
+            
+            TIPPS FÜR INTERVIEWS:
+            • Bereite Antworten vor, bevor sie gefragt werden
+            • Nutze "Letzte Frage" für schnelles Nachlesen
+            • Antworten sind ausführlich und professionell
         """
         messagebox.showinfo("Hilfe", help_text)
         
@@ -440,6 +465,7 @@ class QuizHelper:
                     text = self.speech_to_text(wav_data)
                     
                     if text and len(text.strip()) > 3:
+                        self.last_question = text  # Speichere für Schnellantwort
                         self.result_queue.put(("question", text))
                         
                         # An KI senden (mit Zeitmessung)
@@ -524,16 +550,16 @@ class QuizHelper:
                 messages=[
                     {
                         "role": "system", 
-                        "content": "Beantworte Quiz-Fragen KURZ. NUR die Antwort, KEINE große Erklärung."
+                        "content": "Du bist ein hilfreicher Interview-Assistent. Beantworte Fragen ausführlich und professionell, als würdest du in einem Bewerbungsgespräch antworten. Gib konkrete Beispiele und strukturiere deine Antworten klar."
                     },
                     {
                         "role": "user", 
                         "content": question
                     }
                 ],
-                temperature=0.1,
-                max_tokens=20,
-                stream=False  # Für Quizze ist non-streaming schneller
+                temperature=0.7,
+                max_tokens=500,
+                stream=False
             )
             
             return response.choices[0].message.content.strip()
@@ -557,16 +583,16 @@ class QuizHelper:
                 'messages': [
                     {
                         'role': 'system',
-                        'content': 'Quiz-Antwort in 1-3 Wörtern. NUR Antwort!'
+                        'content': 'Du bist ein hilfreicher Interview-Assistent. Beantworte Fragen ausführlich und professionell, als würdest du in einem Bewerbungsgespräch antworten. Gib konkrete Beispiele und strukturiere deine Antworten klar.'
                     },
                     {
                         'role': 'user',
                         'content': question
                     }
                 ],
-                'temperature': 0.1,
-                'max_tokens': 20,
-                'top_p': 0.1
+                'temperature': 0.7,
+                'max_tokens': 500,
+                'top_p': 0.9
             }
             
             response = requests.post(
@@ -591,15 +617,15 @@ class QuizHelper:
                 'http://localhost:11434/api/generate',
                 json={
                     'model': model,
-                    'prompt': f'Antworte mit 1-3 Wörtern: {question}',
+                    'prompt': f'Du bist ein Interview-Assistent. Beantworte diese Frage ausführlich und professionell für ein Bewerbungsgespräch:\n\n{question}',
                     'stream': False,
                     'options': {
-                        'temperature': 0.1,
-                        'num_predict': 10,
-                        'top_k': 10
+                        'temperature': 0.7,
+                        'num_predict': 300,
+                        'top_k': 40
                     }
                 },
-                timeout=5
+                timeout=15
             )
             
             if response.status_code == 200:
@@ -632,6 +658,9 @@ class QuizHelper:
                 elif msg_type == "buffer":
                     self.buffer_progress_label.config(text=f"Buffer: {content}%")
                     
+                elif msg_type == "status":
+                    self.status_label.config(text=content)
+                    
                 elif msg_type == "error":
                     self.status_label.config(text=f"Status: {content}")
         
@@ -639,6 +668,61 @@ class QuizHelper:
             pass
         
         self.root.after(50, self.update_gui)  # Schnellere GUI-Updates
+    
+    def send_manual_question(self):
+        """Sendet eine manuell eingegebene Frage an die KI"""
+        question = self.manual_input.get().strip()
+        
+        if not question:
+            messagebox.showwarning("Warnung", "Bitte gib eine Frage ein!")
+            return
+        
+        # Frage speichern
+        self.last_question = question
+        
+        # Zeige Frage an
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.question_text.insert(tk.END, f"[{timestamp}] {question}\n")
+        self.question_text.see(tk.END)
+        
+        # Status aktualisieren
+        self.status_label.config(text="Status: Verarbeite Frage...")
+        
+        # In separatem Thread verarbeiten
+        threading.Thread(target=self._process_manual_question, args=(question,), daemon=True).start()
+        
+        # Eingabefeld leeren
+        self.manual_input.delete(0, tk.END)
+    
+    def _process_manual_question(self, question):
+        """Verarbeitet manuelle Frage in separatem Thread"""
+        try:
+            start_time = time.time()
+            answer = self.get_ai_answer(question)
+            response_time = int((time.time() - start_time) * 1000)
+            
+            self.result_queue.put(("answer", answer))
+            self.result_queue.put(("time", response_time))
+            self.result_queue.put(("status", "Status: Bereit"))
+        except Exception as e:
+            self.result_queue.put(("error", f"Fehler: {str(e)}"))
+    
+    def quick_answer_last(self):
+        """Holt schnell eine Antwort für die letzte Frage"""
+        if not self.last_question:
+            messagebox.showinfo("Info", "Noch keine Frage gestellt!")
+            return
+        
+        # Status aktualisieren
+        self.status_label.config(text="Status: Wiederhole letzte Frage...")
+        
+        # Frage erneut anzeigen
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.question_text.insert(tk.END, f"[{timestamp}] 🔄 {self.last_question}\n")
+        self.question_text.see(tk.END)
+        
+        # In separatem Thread verarbeiten
+        threading.Thread(target=self._process_manual_question, args=(self.last_question,), daemon=True).start()
     
     def clear_texts(self):
         """Löscht die Textfelder"""
@@ -656,7 +740,7 @@ class QuizHelper:
 
 # Hauptprogramm
 if __name__ == "__main__":
-    print("\n🚀 Discord Quiz Helper - Turbo Edition")
+    print("\n� Interview Helper - Live Assistance")
     print("=" * 50)
     
     # Prüfe .env Datei
@@ -671,7 +755,7 @@ if __name__ == "__main__":
         create = input("\n.env Datei erstellen? (j/n): ")
         if create.lower() == 'j':
             with open('.env', 'w') as f:
-                f.write("# Discord Quiz Helper API Keys\n")
+                f.write("# Interview Helper API Keys\n")
                 f.write("OPENAI_API_KEY=\n")
                 f.write("GROQ_API_KEY=\n")
             print("✅ .env Datei erstellt! Bitte API Keys eintragen.")
@@ -688,6 +772,7 @@ if __name__ == "__main__":
         print("✅ Groq API Key gefunden")
     
     print("\n💡 Tipp: Nutze Groq für beste Performance!")
+    print("📝 Neue Features: Manuelle Eingabe & Schnellantwort-Button")
     print("=" * 50)
     
     try:
